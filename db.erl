@@ -288,7 +288,9 @@ valid_game({#game{limit=Limit,layout=Layout,host=Host,name=Name}, Pos, Len},
   current_user(Host, Us) andalso
   not current_game(Name, Gs) andalso
   Limit > 0 andalso Limit < 5 andalso
-  length(Layout) =:= Limit.
+  length(Layout) =:= Limit;
+
+valid_game(_, _) -> false.
 
 
 %% valid_player(User, {Game, Pos}, Tables) -> boolean()
