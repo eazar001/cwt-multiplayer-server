@@ -1,5 +1,4 @@
 -module(db).
--compile(export_all).
 
 %%% Callback
 -export(
@@ -16,8 +15,15 @@
     ,create_game/2
     ,list_users/0
     ,list_games/0
+    ,list_players/0
     ,current_user/1
+    ,current_game/1
     ,current_game/2
+    ,join_game/3
+    ,resign_game/3
+    ,find_game/2
+    ,find_player/2
+    ,active_game/1
     ,login/1
     ,ping/1
     ,logout/1
@@ -148,57 +154,56 @@ init(State) -> {ok, State}.
 
 
 handle_call({ create_game, {Game, Position} }, _From, Ts=#tables{games=Gs}) ->
-  {Limit, Length} = {Game#game.limit, length(Game#game.layout)},
-  case valid_game({Game, Position}, Ts) of
-    true when Limit =:= Length, Position > 0, Position =< Length ->
+  Length = length(Game#game.layout),
+  case valid_game({Game, Position, Length}, Ts) of
+    true  ->
       {reply, ?OK, Ts#tables{games=[Game|Gs]}};
     _ ->
       {reply, ?FAIL, Ts}
   end;
 
-handle_call({ join_game, { UserName, Position, Game=#game{name=GameName} } },
-            _From, Ts=#tables{users=Us, players=Ps, games=Gs}) ->
+handle_call({ join_game, { Uname, Pos, Game=#game{name=Gname} } }, _From,
+            Ts=#tables{players=Ps}) ->
 
-  case valid_player(UserName, {Game, Position}, Ts) of
+  case valid_player(Uname, {Game, Pos}, Ts) of
     true ->
-      Player = #player{name=UserName, game=GameName, position=Position,
-                       status=active},
-      PlayerUpdate = lists:map(fun(P) ->
-                                 if
-                                   P#player.name =:= UserName andalso
-                                   P#player.game =:= GameName ->
-                                     Player;
-                                     true -> P
-                                  end
-                               end, Ps),
-      if
-        PlayerUpdate =:= Ps -> {reply, ?OK, Ts#tables{players=[Player|Ps]}};
-        PlayerUpdate =/= Ps -> { reply, ?OK, Ts#tables{players=PlayerUpdate} }
+      Player = #player{name=Uname, game=Gname, position=Pos, status=active},
+      PlayerUpdate =
+        lists:map(fun(P) ->
+                    if
+                      P#player.name =:= Uname andalso
+                      P#player.game =:= Gname ->
+                        Player;
+                      true -> P
+                    end
+                  end, Ps),
+      case PlayerUpdate of
+        Ps -> { reply, ?OK, Ts#tables{players=[Player|Ps]} };
+        _ -> { reply, ?OK, Ts#tables{players=PlayerUpdate} }
       end;
 
-    _ ->
-      {reply, ?FAIL, Ts}
+    _ -> {reply, ?FAIL, Ts}
   end;
 
-handle_call({ resign_game, { UserName, Position, Game=#game{name=GameName} } },
-            _From, Ts=#tables{users=Us, players=Ps, games=Gs}) ->
+handle_call({ resign_game, { Uname, Pos, #game{name=Gname} } }, _From,
+            Ts=#tables{players=Ps}) ->
 
-  case active_player_in_game({UserName, Position}, GameName, Ts) of
+  case active_player_in_game({Uname, Pos}, Gname, Ts) of
     [PlayerProfile] ->
-      PlayerUpdate = lists:map(fun(P) ->
-                                 if
-                                   P =:= PlayerProfile ->
-                                     P#player{status=inactive};
-                                   true -> P
-                                 end
-                               end, Ps),
+      PlayerUpdate =
+        lists:map(fun(P) ->
+                    case P of
+                      PlayerProfile ->
+                        P#player{status=inactive};
+                      _ -> P
+                    end
+                  end, Ps),
       { reply, ?OK, Ts#tables{players=PlayerUpdate} };
-    _ ->
-      { reply, ?FAIL, Ts}
+
+    _ -> {reply, ?FAIL, Ts}
   end;
 
-
-handle_call({add_user, U}, From, Ts=#tables{users=Us}) ->
+handle_call({add_user, U}, _From, Ts=#tables{users=Us}) ->
   case lists:member(U, Us) of
     true -> {reply, ?FAIL, Ts};
     _ -> {reply, ?OK, Ts#tables{users=[U|Us]}}
@@ -207,9 +212,9 @@ handle_call({add_user, U}, From, Ts=#tables{users=Us}) ->
 handle_call({remove_user, U}, _From, Ts=#tables{users=Us}) ->
   NewUsers = lists:delete(U, Us),
   NewTables = Ts#tables{users=NewUsers},
-  if
-    NewUsers =:= Us -> {reply, ?FAIL, NewTables};
-    true -> {reply, ?OK, NewTables}
+  case NewUsers of
+    Us -> {reply, ?FAIL, NewTables};
+    _ -> {reply, ?OK, NewTables}
   end;
 
 handle_call({ping, U}, _From, Ts=#tables{users=Us}) ->
@@ -276,9 +281,10 @@ terminate(Reason, State) -> {ok, Reason, State}.
 %% valid_game(Game, Tables) -> boolean()
 %% This function attempts to validate the constraints of a request to register
 %% a new game in the system.
-valid_game({#game{limit=Limit,layout=Layout,host=Host,name=Name}, Pos},
-           #tables{users=Us,games=Gs}) ->
-
+valid_game({#game{limit=Limit,layout=Layout,host=Host,name=Name}, Pos, Len},
+           #tables{users=Us,games=Gs}) when Limit =:= Len,
+                                            Pos > 0,
+                                            Pos =< Len ->
   current_user(Host, Us) andalso
   not current_game(Name, Gs) andalso
   Limit > 0 andalso Limit < 5 andalso
@@ -296,7 +302,7 @@ valid_player(UserName,
              Ts=#tables{users=Us, players=Ps, games=Gs}) ->
   current_user(UserName, Us) andalso
   current_game(GameName, Gs) andalso
-  not player_in_game({UserName, Pos}, GameName, Ts) andalso
+  not player_in_game(UserName, GameName, Ts) andalso
   Pos > 0 andalso
   Pos =< Limit andalso
   case current_player(UserName, Ts) of
@@ -344,15 +350,15 @@ current_player(UserName, #tables{players=Ps}) ->
 %% represents an active player profile in the game specified by GameName.
 active_player_in_game({UserName, Pos}, GameName, #tables{players=Ps}) ->
   lists:filter(fun(#player{name=N, game=G, position=P, status=S}) ->
-                   UserName =:= N andalso GameName =:= G andalso
-                   Pos =:= P andalso S =:= active end, Ps).
+               UserName =:= N andalso GameName =:= G andalso
+               Pos =:= P andalso S =:= active end, Ps).
 
 
-%% player_in_game(Tuple, string(), Tuple) -> boolean()
+%% player_in_game(string(), string(), Tuple) -> boolean()
 %% Same as active_player_in_game/3, but returns true regardless of status or
 %% position.
-player_in_game({UserName, Pos}, GameName, #tables{players=Ps}) ->
-  L = lists:filter(fun(#player{name=N, game=G, position=P}) ->
+player_in_game(UserName, GameName, #tables{players=Ps}) ->
+  L = lists:filter(fun(#player{name=N, game=G}) ->
                    UserName =:= N andalso GameName =:= G end, Ps),
   L =/= [].
 
@@ -370,7 +376,7 @@ positions_in_game(GameName, Players) ->
 %% Takes a list of Player profile records, and examines them to see if any of them
 %% are currently playing the Game specified in the input argument.
 in_game(Players, #game{name=N}) ->
-  P = lists:keymember(N, #player.game, Players).
+  lists:keymember(N, #player.game, Players).
 
 
 %% active_game(PlayerList) -> boolean()
