@@ -53,15 +53,19 @@
                  ,status }). % status -> atom()
 
 
-%%--------------------------------------------------------------------------------
+%%================================================================================
 %% Interface
-%%--------------------------------------------------------------------------------
+%%================================================================================
 
 
 start() ->
   io:format("Initializing server...~n"),
   gen_server:start({local, ?MODULE}, ?MODULE, ?INITTABLES, []),
   io:format("Server started.~n").
+
+
+stop() ->
+  gen_server:cast(?MODULE, stop).
 
 
 %% list_users() -> ok
@@ -136,13 +140,9 @@ logout(Name) ->
   gen_server:call(?MODULE, { remove_user, #user{name=Name} }).
 
 
-stop() ->
-  gen_server:cast(?MODULE, stop).
-
-
-%%--------------------------------------------------------------------------------
+%%================================================================================
 %% Callback functions
-%%--------------------------------------------------------------------------------
+%%================================================================================
 
 
 %%%%%%%%%%%%%%%%%
@@ -162,42 +162,27 @@ handle_call({ create_game, {Game, Position} }, _From, Ts=#tables{games=Gs}) ->
       {reply, ?FAIL, Ts}
   end;
 
-handle_call({ join_game, { Uname, Pos, Game=#game{name=Gname} } }, _From,
-            Ts=#tables{players=Ps}) ->
-
+handle_call({ join_game, { Uname, Pos, Game } }, _From, Ts) ->
+  #game{name=Gname} = Game,
+  #tables{players=Ps} = Ts,
   case valid_player(Uname, {Game, Pos}, Ts) of
     true ->
       Player = #player{name=Uname, game=Gname, position=Pos, status=active},
-      PlayerUpdate =
-        lists:map(fun(P) ->
-                    if
-                      P#player.name =:= Uname andalso
-                      P#player.game =:= Gname ->
-                        Player;
-                      true -> P
-                    end
-                  end, Ps),
-      case PlayerUpdate of
+      Update = lists:map(fun(P) -> join_state(P, {Uname, Gname, Pos}) end, Ps),
+      case Update of
         Ps -> { reply, ?OK, Ts#tables{players=[Player|Ps]} };
-        _ -> { reply, ?OK, Ts#tables{players=PlayerUpdate} }
+        _ -> { reply, ?OK, Ts#tables{players=Update} }
       end;
 
     _ -> {reply, ?FAIL, Ts}
   end;
 
-handle_call({ resign_game, { Uname, Pos, #game{name=Gname} } }, _From,
-            Ts=#tables{players=Ps}) ->
-
+handle_call({ resign_game, { Uname, Pos, Game } }, _From, Ts) ->
+  #tables{players=Ps} = Ts,
+  #game{name=Gname} = Game,
   case active_player_in_game({Uname, Pos}, Gname, Ts) of
     [PlayerProfile] ->
-      PlayerUpdate =
-        lists:map(fun(P) ->
-                    case P of
-                      PlayerProfile ->
-                        P#player{status=inactive};
-                      _ -> P
-                    end
-                  end, Ps),
+      PlayerUpdate = lists:map(fun(P) -> resign_state(P, PlayerProfile) end, Ps),
       { reply, ?OK, Ts#tables{players=PlayerUpdate} };
 
     _ -> {reply, ?FAIL, Ts}
@@ -250,8 +235,8 @@ handle_cast(list_players, Ts) when Ts#tables.players =:= [] ->
   {noreply, Ts};
 
 handle_cast(list_players, Ts=#tables{players=Ps}) ->
-  [ io:format("~p~nPOS:~p~nSTATUS:~p~n",
-              [P#player.name, P#player.position, P#player.status]) || P <- Ps ],
+  [ io:format("~p~nPOS:~p~nSTATUS:~p~n", [ Name, Pos, Status ])
+   || #player{name=Name, position=Pos, status=Status} <- Ps ],
   {noreply, Ts};
 
 handle_cast({current_user, UserName}, Ts=#tables{users=Us}) ->
@@ -273,18 +258,18 @@ code_change(_Old, State, _Extra) -> {ok, State}.
 terminate(Reason, State) -> {ok, Reason, State}.
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%
-%% Internal Functions %%
-%%%%%%%%%%%%%%%%%%%%%%%%
+%%================================================================================
+%% System/Validation
+%%================================================================================
 
 
 %% valid_game(Game, Tables) -> boolean()
 %% This function attempts to validate the constraints of a request to register
 %% a new game in the system.
-valid_game({#game{limit=Limit,layout=Layout,host=Host,name=Name}, Pos, Len},
-           #tables{users=Us,games=Gs}) when Limit =:= Len,
-                                            Pos > 0,
-                                            Pos =< Len ->
+valid_game({Game, Pos, Len}, Ts) when Pos > 0, Pos =< Len ->
+  #game{limit=Limit,layout=Layout,host=Host,name=Name} = Game,
+  #tables{users=Us, games=Gs} = Ts,
+  Limit =:= Len andalso
   current_user(Host, Us) andalso
   not current_game(Name, Gs) andalso
   Limit > 0 andalso Limit < 5 andalso
@@ -299,9 +284,9 @@ valid_game(_, _) -> false.
 %% player's username, desired position, and proposed game (its name) to join.
 %% If the user is currently in game, then the status must be inactive in order to
 %% be considered a candidate for validation.
-valid_player(UserName,
-             {Game=#game{name=GameName, limit=Limit}, Pos},
-             Ts=#tables{users=Us, players=Ps, games=Gs}) ->
+valid_player(UserName, {Game, Pos}, Ts) ->
+  #game{name=GameName, limit=Limit} = Game,
+  #tables{users=Us, players=Ps, games=Gs} = Ts,
   current_user(UserName, Us) andalso
   current_game(GameName, Gs) andalso
   not player_in_game(UserName, GameName, Ts) andalso
@@ -332,6 +317,7 @@ find_game(GameName, GameTable) ->
 find_player(UserName, PlayerTable) ->
   lists:keyfind(UserName, #player.name, PlayerTable).
 
+
 %% current_user(UserName, UserTable) -> boolean()
 %% True if system Tables contains a user with the name represented by Username.
 current_user(UserName, UserTable) ->
@@ -350,28 +336,36 @@ current_player(UserName, #tables{players=Ps}) ->
 %% active_player_in_game(Tuple, string(), Tuple) -> boolean()
 %% Takes a UserName and Position, and returns a list of all player profiles that
 %% represents an active player profile in the game specified by GameName.
-active_player_in_game({UserName, Pos}, GameName, #tables{players=Ps}) ->
-  lists:filter(fun(#player{name=N, game=G, position=P, status=S}) ->
-               UserName =:= N andalso GameName =:= G andalso
-               Pos =:= P andalso S =:= active end, Ps).
+active_player_in_game({Uname, Pos}, Gname, #tables{players=Ps}) ->
+  Keys = {Uname, Gname, Pos},
+  lists:filter(fun(Player) -> active_match(Player, Keys) end, Ps).
+
+active_match(Player, {Uname, Gname, Pos}) ->
+  #player{name=N, game=G, position=P, status=S} = Player,
+  Uname =:=N andalso Gname =:= G andalso Pos =:= P andalso S=:= active.
 
 
 %% player_in_game(string(), string(), Tuple) -> boolean()
 %% Same as active_player_in_game/3, but returns true regardless of status or
 %% position.
 player_in_game(UserName, GameName, #tables{players=Ps}) ->
-  L = lists:filter(fun(#player{name=N, game=G}) ->
-                   UserName =:= N andalso GameName =:= G end, Ps),
-  L =/= [].
+  Keys = {UserName, GameName},
+  [] =/= lists:filter(fun(Player) -> in_game_match(Player, Keys) end, Ps).
+
+in_game_match(#player{name=N, game=G}, {Uname, Gname}) ->
+  Uname =:= N andalso Gname =:= G.
+
 
 %% positions_in_game(GameName, Players) -> [integer()]
 %% Takes a GameName string and list of Player profile records and filters the list
 %% of records to show only the integer representations of the active players that
 %% are partaking in the game.
 positions_in_game(GameName, Players) ->
-  Ps = lists:filter(fun(P) -> P#player.game =:= GameName andalso
-                    P#player.status =:= active end, Players),
+  Ps = lists:filter(fun(P) -> pos_match(P, GameName) end, Players),
   lists:map(fun(P) -> P#player.position end, Ps).
+
+pos_match(#player{status=Status, game=Gname}, GameName) ->
+  Gname =:= GameName andalso Status =:= active.
 
 
 %% in_game(Players, Game) -> boolean()
@@ -386,6 +380,23 @@ in_game(Players, #game{name=N}) ->
 %% least two games.
 active_game([H|Rest]) ->
   lists:any(fun(X) -> X =/= H end, Rest).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%% Internal Functions %%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+resign_state(MatchingPlayer, MatchingPlayer) ->
+  MatchingPlayer#player{status=inactive};
+
+resign_state(Player, _) -> Player.
+
+
+join_state(#player{name=Uname, game=Gname}, {Uname, Gname, Pos}) ->
+  #player{name=Uname, game=Gname, position=Pos, status=active};
+
+join_state(Player, _) -> Player.
 
 
 bool_to_answer(true) -> yes;
