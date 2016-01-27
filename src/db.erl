@@ -269,7 +269,7 @@ terminate(Reason, State) -> {ok, Reason, State}.
 valid_game({Game, Pos, Len}, Ts) when Pos > 0, Pos =< Len ->
   #game{limit=Limit,host=Host,name=Name} = Game,
   #tables{users=Us, games=Gs} = Ts,
-  valid_game_length(Len, Limit),
+  valid_game_length(Len, Limit) andalso
   current_user(Host, Us) andalso not current_game(Name, Gs);
 
 valid_game(_, _) -> false.
@@ -290,7 +290,7 @@ valid_player(UserName, {Game, Pos}, Ts) ->
   #tables{users=Us, players=Ps, games=Gs} = Ts,
   current_user(UserName, Us) andalso
   current_game(GameName, Gs) andalso
-  validate_player(UserName, GameName, Game, Ts),
+  validate_player(UserName, GameName, Game, Ts) andalso
   validate_position(Pos, GameName, Limit, Ps).
 
 validate_position(Pos, Gname, Limit, Players) when Pos > 0, Pos =< Limit ->
