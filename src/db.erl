@@ -214,7 +214,7 @@ handle_call({ping, U}, _From, Ts=#tables{users=Us}) ->
 %%%%%%%%%%%%%%%%%%
 
 
-handle_cast(list_users, Ts) when Ts#tables.users =:= [] ->
+handle_cast(list_users, Ts=#tables{users=[]}) ->
   io:format("No registered users~n"),
   {noreply, Ts};
 
@@ -222,7 +222,7 @@ handle_cast(list_users, Ts=#tables{users=Us}) ->
   [ io:format("~s~n", [U#user.name]) || U <- Us ],
   {noreply, Ts};
 
-handle_cast(list_games, Ts=#tables{games=Gs}) when Gs =:= [] ->
+handle_cast(list_games, Ts=#tables{games=[]}) ->
   io:format("No registered games~n"),
   {noreply, Ts};
 
@@ -230,7 +230,7 @@ handle_cast(list_games, Ts=#tables{games=Gs}) ->
   [ io:format("~s~n", [G#game.name]) || G <- Gs ],
   {noreply, Ts};
 
-handle_cast(list_players, Ts) when Ts#tables.players =:= [] ->
+handle_cast(list_players, Ts=#tables{players=[]}) ->
   io:format("No registered players~n"),
   {noreply, Ts};
 
@@ -267,15 +267,16 @@ terminate(Reason, State) -> {ok, Reason, State}.
 %% This function attempts to validate the constraints of a request to register
 %% a new game in the system.
 valid_game({Game, Pos, Len}, Ts) when Pos > 0, Pos =< Len ->
-  #game{limit=Limit,layout=Layout,host=Host,name=Name} = Game,
+  #game{limit=Limit,host=Host,name=Name} = Game,
   #tables{users=Us, games=Gs} = Ts,
-  Limit =:= Len andalso
-  current_user(Host, Us) andalso
-  not current_game(Name, Gs) andalso
-  Limit > 0 andalso Limit < 5 andalso
-  length(Layout) =:= Limit;
+  valid_game_length(Len, Limit),
+  current_user(Host, Us) andalso not current_game(Name, Gs);
 
 valid_game(_, _) -> false.
+
+%% valid_game_length(Length, Limit) -> boolean()
+valid_game_length(Length, Length) when Length > 0, Length < 5 -> true;
+valid_game_length(_, _) -> false.
 
 
 %% valid_player(User, {Game, Pos}, Tables) -> boolean()
@@ -289,39 +290,45 @@ valid_player(UserName, {Game, Pos}, Ts) ->
   #tables{users=Us, players=Ps, games=Gs} = Ts,
   current_user(UserName, Us) andalso
   current_game(GameName, Gs) andalso
-  not player_in_game(UserName, GameName, Ts) andalso
-  Pos > 0 andalso
-  Pos =< Limit andalso
-  case current_player(UserName, Ts) of
+  validate_player(UserName, GameName, Game, Ts),
+  validate_position(Pos, GameName, Limit, Ps).
+
+validate_position(Pos, Gname, Limit, Players) when Pos > 0, Pos =< Limit ->
+  not lists:member(Pos, positions_in_game(Gname, Players));
+
+validate_position(_, _, _, _) -> false.
+
+validate_player(Uname, Gname, Game, Ts) ->
+  not player_in_game(Uname, Gname, Ts) andalso
+  case current_player(Uname, Ts) of
     false -> true;
     Xs -> in_game(Xs, Game)
-  end andalso
-  not lists:member(Pos, positions_in_game(GameName, Ps)).
+  end.
 
 
-%% current_game(GameName, Tables) -> boolean()
+%% current_game(GameName, Games) -> boolean()
 %% True if system Tables contains a game with the title represented by GameName.
-current_game(GameName, GameTable) ->
-  lists:keymember(GameName, #game.name, GameTable).
+current_game(GameName, Games) ->
+  lists:keymember(GameName, #game.name, Games).
 
 
-%% find_game(GameName, Tables) -> false | Tuple
+%% find_game(GameName, Games) -> false | Tuple
 %% Finds the first occurrence of the game and returns the tuple. False otherwise.
-find_game(GameName, GameTable) ->
-  lists:keyfind(GameName, #game.name, GameTable).
+find_game(GameName, Games) ->
+  lists:keyfind(GameName, #game.name, Games).
 
 
-%% find_player(UserName, PlayerTable) -> false | tuple
+%% find_player(UserName, Players) -> false | tuple
 %% Find a player in the registered players table and return the entire player
 %% profile. Returns false if no match is found.
-find_player(UserName, PlayerTable) ->
-  lists:keyfind(UserName, #player.name, PlayerTable).
+find_player(UserName, Players) ->
+  lists:keyfind(UserName, #player.name, Players).
 
 
-%% current_user(UserName, UserTable) -> boolean()
+%% current_user(UserName, Users) -> boolean()
 %% True if system Tables contains a user with the name represented by Username.
-current_user(UserName, UserTable) ->
-  lists:keymember(UserName, #user.name, UserTable).
+current_user(UserName, Users) ->
+  lists:keymember(UserName, #user.name, Users).
 
 
 %% current_player(UserName, Players) -> false | [Tuple]
@@ -340,9 +347,10 @@ active_player_in_game({Uname, Pos}, Gname, #tables{players=Ps}) ->
   Keys = {Uname, Gname, Pos},
   lists:filter(fun(Player) -> active_match(Player, Keys) end, Ps).
 
-active_match(Player, {Uname, Gname, Pos}) ->
-  #player{name=N, game=G, position=P, status=S} = Player,
-  Uname =:=N andalso Gname =:= G andalso Pos =:= P andalso S=:= active.
+active_match(#player{name=Un,game=Gn,position=P,status=active}, {Un, Gn, P}) ->
+  true;
+
+active_match(_, _) -> false.
 
 
 %% player_in_game(string(), string(), Tuple) -> boolean()
@@ -352,8 +360,8 @@ player_in_game(UserName, GameName, #tables{players=Ps}) ->
   Keys = {UserName, GameName},
   [] =/= lists:filter(fun(Player) -> in_game_match(Player, Keys) end, Ps).
 
-in_game_match(#player{name=N, game=G}, {Uname, Gname}) ->
-  Uname =:= N andalso Gname =:= G.
+in_game_match(#player{name=Uname, game=Gname}, {Uname, Gname}) -> true;
+in_game_match(_, _) -> false.
 
 
 %% positions_in_game(GameName, Players) -> [integer()]
@@ -364,8 +372,8 @@ positions_in_game(GameName, Players) ->
   Ps = lists:filter(fun(P) -> pos_match(P, GameName) end, Players),
   lists:map(fun(P) -> P#player.position end, Ps).
 
-pos_match(#player{status=Status, game=Gname}, GameName) ->
-  Gname =:= GameName andalso Status =:= active.
+pos_match(#player{status=active, game=GameName}, GameName) -> true;
+pos_match(_, _) -> false.
 
 
 %% in_game(Players, Game) -> boolean()
