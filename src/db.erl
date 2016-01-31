@@ -65,7 +65,9 @@ start() ->
 
 
 stop() ->
-  gen_server:cast(?MODULE, stop).
+  io:format("Stopping server...~n"),
+  gen_server:cast(?MODULE, stop),
+  io:format("Server stopped.~n").
 
 
 %% list_users() -> ok
@@ -194,19 +196,13 @@ handle_call({add_user, U}, _From, Ts=#tables{users=Us}) ->
     _ -> {reply, ?OK, Ts#tables{users=[U|Us]}}
   end;
 
-handle_call({remove_user, U}, _From, Ts=#tables{users=Us}) ->
-  NewUsers = lists:delete(U, Us),
-  NewTables = Ts#tables{users=NewUsers},
-  case NewUsers of
-    Us -> {reply, ?FAIL, NewTables};
-    _ -> {reply, ?OK, NewTables}
-  end;
+handle_call({remove_user, U}, From, Ts=#tables{users=Us}) ->
+  reply:remove_user(From, U, Us),
+  {noreply, Ts};
 
-handle_call({ping, U}, _From, Ts=#tables{users=Us}) ->
-  case lists:member(U, Us) of
-    true -> {reply, ?OK, Ts};
-    _ -> {reply, ?FAIL, Ts}
-  end.
+handle_call({ping, U}, From, Ts=#tables{users=Us}) ->
+  reply:ping(From, U, Us),
+  {noreply, Ts}.
 
 
 %%%%%%%%%%%%%%%%%%
@@ -251,7 +247,21 @@ handle_cast({current_game, GameName}, Ts=#tables{games=Gs}) ->
 
 handle_cast(stop, State) -> {stop, normal, State}.
 
-handle_info(_Info, State) -> {noreply, State}.
+handle_info({From, ping_ok}, Ts) ->
+  gen_server:reply(From, ?OK),
+  {noreply, Ts};
+
+handle_info({From, ping_fail}, Ts) ->
+  gen_server:reply(From, ?FAIL),
+  {noreply, Ts};
+
+handle_info({From, remove_user_ok, Users}, Ts) ->
+  gen_server:reply(From, ?OK),
+  {noreply, Ts#tables{users=Users}};
+
+handle_info({From, remove_user_fail, _Users}, Ts) ->
+  gen_server:reply(From, ?FAIL),
+  {noreply, Ts}.
 
 code_change(_Old, State, _Extra) -> {ok, State}.
 
