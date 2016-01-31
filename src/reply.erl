@@ -52,3 +52,15 @@ handle_event({remove_user, From, User, Users}, Server) ->
     _ -> Server ! {From, remove_user_ok, NewUsers}
   end,
   {ok, Server}.
+
+handle_call(_Msg, State) ->
+  {noreply, State}.
+
+handle_info(_Msg, State) ->
+  {noreply, State}.
+
+code_change(_Old, State, _Extra) ->
+  {ok, State}.
+
+terminate(Reason, State) ->
+  {ok, Reason, State}.
