@@ -9,11 +9,12 @@
 %%================================================================================
 
 
-start(ServerName) ->
+start_link(ServerName) ->
   io:format("Initializing reply handler~n"),
-  gen_event:start({local, ?MODULE}),
+  {ok, Pid} = gen_event:start_link({local, ?MODULE}),
   gen_event:add_handler(?MODULE, ?MODULE, whereis(ServerName)),
-  io:format("Reply handler started.~n").
+  io:format("Reply handler started.~n"),
+  {ok, Pid}.
 
 
 ping(From, User, Users) ->
@@ -54,10 +55,10 @@ handle_event({remove_user, From, User, Users}, Server) ->
   {ok, Server}.
 
 handle_call(_Msg, State) ->
-  {noreply, State}.
+  {ok, State}.
 
-handle_info(_Msg, State) ->
-  {noreply, State}.
+handle_info(_Msg, Server) ->
+  {ok, Server}.
 
 code_change(_Old, State, _Extra) ->
   {ok, State}.

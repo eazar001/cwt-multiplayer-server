@@ -11,7 +11,7 @@
 
 %%% API
 -export(
-   [ start/0
+   [ start_link/0
     ,create_game/2
     ,list_users/0
     ,list_games/0
@@ -58,10 +58,11 @@
 %%================================================================================
 
 
-start() ->
+start_link() ->
   io:format("Initializing server...~n"),
-  gen_server:start({local, ?MODULE}, ?MODULE, ?INITTABLES, []),
-  io:format("Server started.~n").
+  {ok, Pid} = gen_server:start_link({local, ?MODULE}, ?MODULE, ?INITTABLES, []),
+  io:format("Server started.~n"),
+  {ok, Pid}.
 
 
 stop() ->
