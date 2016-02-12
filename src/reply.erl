@@ -1,5 +1,20 @@
 -module(reply).
--compile(export_all).
+
+%% API
+-export(
+  [ start_link/1
+   ,ping/3
+   ,remove_user/3
+   ,stop/0 ]).
+
+%% Callback
+-export(
+  [ code_change/3
+   ,handle_call/2
+   ,handle_event/2
+   ,handle_info/2
+   ,init/1
+   ,terminate/2 ]).
 
 -behavior(gen_event).
 

@@ -1,5 +1,10 @@
 -module(cwt_sup).
--compile(export_all).
+
+%% API
+-export([start_link/0]).
+
+%% Callback
+-export([init/1]).
 
 -behavior(supervisor).
 
@@ -20,14 +25,13 @@ init(_Args) ->
         restart => permanent,
         shutdown => brutal_kill,
         type => worker,
-        modules => [db]
-      },
+        modules => [db] },
+
      #{ id => reply_handler,
         start => {reply, start_link, [db]},
         restart => permanent,
         shutdown => brutal_kill,
         type => worker,
-        modules => [dynamic]
-      }
+        modules => [dynamic] }
     ],
   {ok, {SupFlags, ChildSpecs}}.
