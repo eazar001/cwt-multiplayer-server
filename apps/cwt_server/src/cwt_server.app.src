@@ -1,0 +1,16 @@
+{application, cwt_server,
+ [{description, "Custom Wars Tactics Multiplayer Server"},
+  {vsn, "1.0.0"},
+  {registered, [db,reply,cwt_sup]},
+  {mod, {cwt_app, []}},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, [cwt_sup,db,reply]},
+
+  {contributors, []},
+  {licenses, [mit]},
+  {links, []}
+ ]}.

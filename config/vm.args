@@ -1,0 +1,6 @@
+-sname cwt-erlang
+
+-setcookie cwt-remote
+
++K true
++A30
