@@ -31,8 +31,8 @@
 
 -behavior(gen_server).
 
--define(OK, "{ status:ok }").
--define(FAIL, "{ status:fail }").
+-define(OK, <<"{ status:ok }">>).
+-define(FAIL, <<"{ status:fail }">>).
 
 -define(INITTABLES, #tables{}). % [users, players, games]
 
@@ -354,9 +354,21 @@ current_player(UserName, #tables{players=Ps}) ->
 %% active_player_in_game(Tuple, string(), Tuple) -> boolean()
 %% Takes a UserName and Position, and returns a list of all player profiles that
 %% represents an active player profile in the game specified by GameName.
-active_player_in_game({Uname, Pos}, Gname, #tables{players=Ps}) ->
-  Keys = {Uname, Gname, Pos},
-  lists:filter(fun(Player) -> active_match(Player, Keys) end, Ps).
+active_player_in_game({Uname, Pos}, Gname, Tables) ->
+  #tables{players=Ps, games=Gs} = Tables,
+  case lists:filter(fun(G) -> G#game.name =:= Gname end, Gs) of
+    [] -> false;
+    [Game] -> invalid_or_player(Game, Ps, {Uname, Gname, Pos})
+  end.
+
+invalid_or_player(#game{layout=L}, Players, {Uname, Gname, Pos}) ->
+  case active_game(L) of
+    true ->
+      Keys = {Uname, Gname, Pos},
+      lists:filter(fun(Player) -> active_match(Player, Keys) end, Players);
+    _ ->
+      false
+  end.
 
 active_match(#player{name=Un,game=Gn,position=P,status=active}, {Un, Gn, P}) ->
   true;
@@ -396,9 +408,15 @@ in_game(Players, #game{name=N}) ->
 
 %% active_game(PlayerList) -> boolean()
 %% Active game if we find that there is more than one active player comprising at
-%% least two games.
-active_game([H|Rest]) ->
-  lists:any(fun(X) -> X =/= H end, Rest).
+%% least two teams.
+active_game(<< First, Rest/binary >>) ->
+  active_game(First, Rest).
+
+active_game(_, <<>>) -> false;
+active_game(First, << First, Rest/binary >>) ->
+  false orelse active_game(First, Rest);
+
+active_game(_, << _, _/binary >>) -> true.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%
